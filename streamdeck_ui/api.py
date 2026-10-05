@@ -482,13 +482,16 @@ class StreamDeckServer:
         # Wait for at least one cycle
         display_handler.synchronize()
 
-    def set_playing(self, playing: bool) -> None:
+    def set_playing(self, playing: bool) -> bool:
         """Updates the playing state and redraws every button that has mpris_icons.
 
         Does nothing if the state has not changed, so it is cheap to call on every poll.
+
+        :return: True if the state changed, so the caller knows to refresh any on-screen copies
+        :rtype: bool
         """
         if playing == self.playing:
-            return
+            return False
         self.playing = playing
 
         for deck_id, deck_state in self.state.items():
@@ -498,6 +501,7 @@ class StreamDeckServer:
                 for button, button_settings in buttons.items():
                     if button_settings.get("mpris_icons"):
                         self.update_button_filters(deck_id, page, button)
+        return True
 
     def update_streamdeck_filters(self, serial_number: str):
         """Updates the filters for all the StreamDeck buttons.

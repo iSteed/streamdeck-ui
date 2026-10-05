@@ -87,6 +87,8 @@ PLAYBACK_POLL_MS = 2000
 "How often buttons with mpris_icons check the media player"
 PLAYBACK_REFRESH_AFTER_PRESS_MS = 500
 "How long after a button command runs before checking the media player again"
+PLAYBACK_REDRAW_DELAY_MS = 200
+"How long after a playback change before the UI copies the new button icon"
 "Timer used to delay updates to the button text"
 
 dimmer_options = {
@@ -181,9 +183,11 @@ def _replace_special_keys(key):
     return key
 
 
-def refresh_playback_icons() -> None:
-    """Redraws buttons with mpris_icons to match whether a media player is playing."""
-    api.set_playing(mpris.is_playing())
+def refresh_playback_icons(ui) -> None:
+    """Redraws buttons with mpris_icons to match whether a media player is playing, on the device and in the UI."""
+    if api.set_playing(mpris.is_playing()):
+        # The display draws the new icon on its own thread, so give it a moment before copying it to the tile
+        QTimer.singleShot(PLAYBACK_REDRAW_DELAY_MS, partial(redraw_buttons, ui))
 
 
 def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
@@ -201,7 +205,9 @@ def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
             try:
                 Popen(shlex.split(command))
                 # Let the player act on the command before checking its state again
-                QTimer.singleShot(PLAYBACK_REFRESH_AFTER_PRESS_MS, refresh_playback_icons)
+                QTimer.singleShot(
+                    PLAYBACK_REFRESH_AFTER_PRESS_MS, partial(refresh_playback_icons, ui)
+                )
             except Exception as error:
                 print(f"The command '{command}' failed: {error}")
 
@@ -939,7 +945,7 @@ def start(_exit: bool = False) -> None:
             # Keep mpris_icons buttons in step with the media player
             playback_timer = QTimer()
             playback_timer.start(PLAYBACK_POLL_MS)
-            playback_timer.timeout.connect(refresh_playback_icons)  # type: ignore [attr-defined]
+            playback_timer.timeout.connect(partial(refresh_playback_icons, ui))  # type: ignore [attr-defined]
 
             # Configure signal hanlders
             # https://stackoverflow.com/a/4939113/192815

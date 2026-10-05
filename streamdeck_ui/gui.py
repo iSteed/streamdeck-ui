@@ -1,4 +1,5 @@
 """Defines the QT powered interface for configuring Stream Decks"""
+
 import os
 import shlex
 import signal
@@ -12,9 +13,19 @@ import pkg_resources
 from PySide6 import QtWidgets
 from PySide6.QtCore import QMimeData, QSignalBlocker, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QDesktopServices, QDrag, QIcon
-from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSystemTrayIcon
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFileDialog,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QSizePolicy,
+    QSystemTrayIcon,
+)
 
 from streamdeck_ui.api import StreamDeckServer
+from streamdeck_ui import mpris
 from streamdeck_ui.config import LOGO, STATE_FILE
 from streamdeck_ui.semaphore import Semaphore, SemaphoreAcquireError
 from streamdeck_ui.ui_main import Ui_MainWindow
@@ -30,8 +41,12 @@ except ImportError as pynput_error:
     print("*** Warning ***")
     print("---------------")
     print("Virtual keyboard functionality has been disabled.")
-    print("You can still run Stream Deck UI, however you will not be able to emulate key presses or text typing.")
-    print("The most likely reason you are seeing this message is because you don't have an X server running")
+    print(
+        "You can still run Stream Deck UI, however you will not be able to emulate key presses or text typing."
+    )
+    print(
+        "The most likely reason you are seeing this message is because you don't have an X server running"
+    )
     print("and your operating system uses Wayland.")
     print("")
     print(f"For troubleshooting purposes, the actual error is: \n{pynput_error}")
@@ -67,9 +82,25 @@ selected_button: Optional[QtWidgets.QToolButton] = None
 "A reference to the currently selected button"
 
 text_update_timer: Optional[QTimer] = None
+
+PLAYBACK_POLL_MS = 2000
+"How often buttons with mpris_icons check the media player"
+PLAYBACK_REFRESH_AFTER_PRESS_MS = 500
+"How long after a button command runs before checking the media player again"
 "Timer used to delay updates to the button text"
 
-dimmer_options = {"Never": 0, "10 Seconds": 10, "1 Minute": 60, "5 Minutes": 300, "10 Minutes": 600, "15 Minutes": 900, "30 Minutes": 1800, "1 Hour": 3600, "5 Hours": 7200, "10 Hours": 36000}
+dimmer_options = {
+    "Never": 0,
+    "10 Seconds": 10,
+    "1 Minute": 60,
+    "5 Minutes": 300,
+    "10 Minutes": 600,
+    "15 Minutes": 900,
+    "30 Minutes": 1800,
+    "1 Hour": 3600,
+    "5 Hours": 7200,
+    "10 Hours": 36000,
+}
 last_image_dir = ""
 
 
@@ -150,6 +181,11 @@ def _replace_special_keys(key):
     return key
 
 
+def refresh_playback_icons() -> None:
+    """Redraws buttons with mpris_icons to match whether a media player is playing."""
+    api.set_playing(mpris.is_playing())
+
+
 def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
     # TODO: Handle both key down and key up events in future.
     if state:
@@ -164,6 +200,8 @@ def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
         if command:
             try:
                 Popen(shlex.split(command))
+                # Let the player act on the command before checking its state again
+                QTimer.singleShot(PLAYBACK_REFRESH_AFTER_PRESS_MS, refresh_playback_icons)
             except Exception as error:
                 print(f"The command '{command}' failed: {error}")
 
@@ -174,10 +212,14 @@ def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
                 for section in keys.split(","):
                     # Since + and , are used to delimit our section and keys to press,
                     # they need to be substituted with keywords.
-                    section_keys = [_replace_special_keys(key_name) for key_name in section.split("+")]
+                    section_keys = [
+                        _replace_special_keys(key_name) for key_name in section.split("+")
+                    ]
 
                     # Translate string to enum, or just the string itself if not found
-                    section_keys = [getattr(Key, key_name.lower(), key_name) for key_name in section_keys]
+                    section_keys = [
+                        getattr(Key, key_name.lower(), key_name) for key_name in section_keys
+                    ]
 
                     for key_name in section_keys:
                         if isinstance(key_name, str) and key_name.startswith("delay"):
@@ -186,7 +228,9 @@ def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
                                 try:
                                     sleep_time = float(sleep_time_arg)
                                 except Exception:
-                                    print(f"Could not convert sleep time to float '{sleep_time_arg}'")
+                                    print(
+                                        f"Could not convert sleep time to float '{sleep_time_arg}'"
+                                    )
                                     sleep_time = 0
                             else:
                                 # default if not specified
@@ -196,7 +240,9 @@ def handle_keypress(ui, deck_id: str, key: int, state: bool) -> None:
                                 try:
                                     time.sleep(sleep_time)
                                 except Exception:
-                                    print(f"Could not sleep with provided sleep time '{sleep_time}'")
+                                    print(
+                                        f"Could not sleep with provided sleep time '{sleep_time}'"
+                                    )
                         else:
                             try:
                                 if isinstance(key_name, str) and key_name.lower().startswith("0x"):
@@ -328,7 +374,9 @@ def select_image(window) -> None:
             image_file = os.path.expanduser("~")
         else:
             image_file = last_image_dir
-    file_name = QFileDialog.getOpenFileName(window, "Open Image", image_file, "Image Files (*.png *.jpg *.bmp *.svg *.gif)")[0]
+    file_name = QFileDialog.getOpenFileName(
+        window, "Open Image", image_file, "Image Files (*.png *.jpg *.bmp *.svg *.gif)"
+    )[0]
     if file_name:
         last_image_dir = os.path.dirname(file_name)
         deck_id = _deck_id(window.ui)
@@ -411,7 +459,9 @@ def button_clicked(ui, clicked_button, buttons) -> None:
         ui.command.setText(api.get_button_command(deck_id, _page(ui), button_id))
         ui.keys.setCurrentText(api.get_button_keys(deck_id, _page(ui), button_id))
         ui.write.setPlainText(api.get_button_write(deck_id, _page(ui), button_id))
-        ui.change_brightness.setValue(api.get_button_change_brightness(deck_id, _page(ui), button_id))
+        ui.change_brightness.setValue(
+            api.get_button_change_brightness(deck_id, _page(ui), button_id)
+        )
         ui.switch_page.setValue(api.get_button_switch_page(deck_id, _page(ui), button_id))
         api.reset_dimmer(deck_id)
     else:
@@ -506,7 +556,9 @@ def build_buttons(ui, tab) -> None:
             button = DraggableButton(base_widget, ui, api)
             button.setCheckable(True)
             button.index = index
-            button.setSizePolicy(QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.MinimumExpanding)
+            button.setSizePolicy(
+                QSizePolicy.Policy.MinimumExpanding, QSizePolicy.Policy.MinimumExpanding
+            )
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
             button.setIconSize(QSize(80, 80))
             button.setStyleSheet(BUTTON_STYLE)
@@ -520,11 +572,15 @@ def build_buttons(ui, tab) -> None:
     # Note that the button click event captures the ui variable, the current button
     #  and all the other buttons
     for button in buttons:
-        button.clicked.connect(lambda button=button, buttons=buttons: button_clicked(ui, button, buttons))
+        button.clicked.connect(
+            lambda button=button, buttons=buttons: button_clicked(ui, button, buttons)
+        )
 
 
 def export_config(window) -> None:
-    file_name = QFileDialog.getSaveFileName(window, "Export Config", os.path.expanduser("~/streamdeck_ui_export.json"), "JSON (*.json)")[0]
+    file_name = QFileDialog.getSaveFileName(
+        window, "Export Config", os.path.expanduser("~/streamdeck_ui_export.json"), "JSON (*.json)"
+    )[0]
     if not file_name:
         return
 
@@ -532,7 +588,9 @@ def export_config(window) -> None:
 
 
 def import_config(window) -> None:
-    file_name = QFileDialog.getOpenFileName(window, "Import Config", os.path.expanduser("~"), "Config Files (*.json)")[0]
+    file_name = QFileDialog.getOpenFileName(
+        window, "Import Config", os.path.expanduser("~"), "Config Files (*.json)"
+    )[0]
     if not file_name:
         return
 
@@ -679,7 +737,9 @@ def show_settings(window: MainWindow) -> None:
         settings.ui.dim.addItem(f"{label}", userData=value)
 
     existing_timeout = api.get_display_timeout(deck_id)
-    existing_index = next((i for i, (k, v) in enumerate(dimmer_options.items()) if v == existing_timeout), None)
+    existing_index = next(
+        (i for i, (k, v) in enumerate(dimmer_options.items()) if v == existing_timeout), None
+    )
 
     if existing_index is None:
         settings.ui.dim.addItem(f"Custom: {existing_timeout}s", userData=existing_timeout)
@@ -845,7 +905,9 @@ def start(_exit: bool = False) -> None:
         version = "devel"
 
     try:
-        with Semaphore("/tmp/streamdeck_ui.lock"):  # nosec - this file is only observed with advisory lock
+        with Semaphore(
+            "/tmp/streamdeck_ui.lock"
+        ):  # nosec - this file is only observed with advisory lock
             # The semaphore was created, so this is the first instance
 
             api = StreamDeckServer()
@@ -873,6 +935,11 @@ def start(_exit: bool = False) -> None:
             api.plugevents.cpu_changed.connect(partial(streamdeck_cpu_changed, ui))
 
             api.start()
+
+            # Keep mpris_icons buttons in step with the media player
+            playback_timer = QTimer()
+            playback_timer.start(PLAYBACK_POLL_MS)
+            playback_timer.timeout.connect(refresh_playback_icons)  # type: ignore [attr-defined]
 
             # Configure signal hanlders
             # https://stackoverflow.com/a/4939113/192815

@@ -89,3 +89,6 @@ out
 
 # QT
 .qt_for_python/
+
+# Local secrets
+.env
